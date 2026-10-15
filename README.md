@@ -25,24 +25,23 @@ Aplicação REST que demonstra três padrões de projeto clássicos aplicados a 
 flowchart TD
     Client([Cliente HTTP]) -->|POST /api/banco/sacar| Controller[BancoController]
     Controller --> Service[BancoService]
+    Service -->|busca cliente| DB[(H2 Database)]
     Service --> Facade[BancoFacade]
 
-    subgraph Proxy Pattern
-        Facade --> Proxy[ServicoBancarioProxy]
-        Proxy -->|log + delega| Real[ServicoBancarioReal]
-    end
-
     subgraph Chain of Responsibility
-        Real --> H1[AutenticacaoHandler]
+        Facade -->|1. valida| H1[AutenticacaoHandler]
         H1 -->|autenticado?| H2[SaldoHandler]
         H2 -->|saldo ok?| H3[LimiteDiarioHandler]
-        H3 -->|limite ok?| Saque[✅ Saque executado]
-        H1 -->|não autenticado| Erro1[❌ 401 Não autorizado]
-        H2 -->|sem saldo| Erro2[❌ 400 Saldo insuficiente]
-        H3 -->|acima do limite| Erro3[❌ 400 Limite diário excedido]
+        H1 -->|não| Bloqueio[❌ Operação bloqueada]
+        H2 -->|não| Bloqueio
+        H3 -->|não| Bloqueio
     end
 
-    Real --- DB[(H2 Database)]
+    subgraph Proxy Pattern
+        H3 -->|2. aprovado| Proxy[ServicoBancarioProxy]
+        Proxy -->|log + delega| Real[ServicoBancarioReal]
+        Real --> Sucesso[✅ Operação realizada]
+    end
 ```
 
 ---
@@ -69,7 +68,23 @@ flowchart TD
 ```bash
 git clone https://github.com/odavid062/sistema-bancario-padroes-chain-proxy-facade.git
 cd sistema-bancario-padroes-chain-proxy-facade/Sistema
+
+# Linux / macOS
 ./mvnw spring-boot:run
+
+# Windows
+.\mvnw.cmd spring-boot:run
+```
+
+### Executar Testes
+```bash
+cd sistema-bancario-padroes-chain-proxy-facade/Sistema
+
+# Linux / macOS
+./mvnw test
+
+# Windows
+.\mvnw.cmd test
 ```
 
 ### Com Docker
@@ -80,6 +95,9 @@ docker compose up
 ```
 
 A API estará disponível em `http://localhost:8080`.
+
+### Variáveis de Ambiente
+- `SPRING_PROFILES_ACTIVE` — Perfil ativo do Spring Boot (definido como `default` no `docker-compose.yml`).
 
 ---
 
@@ -97,19 +115,22 @@ curl -X POST http://localhost:8080/api/banco/sacar \
 ```
 
 ### Respostas possíveis
-```json
-// 200 OK
-"Saque de R$ 500.00 realizado com sucesso."
+```text
+// 200 OK (quando todas as validações são aprovadas)
+Operação realizada com sucesso.
 
-// 401 Unauthorized
-"Operação negada: cliente não autenticado."
+// 200 OK (quando qualquer regra da cadeia é violada)
+Operação bloqueada por segurança.
 
-// 400 Bad Request
-"Operação negada: saldo insuficiente."
-
-// 400 Bad Request
-"Operação negada: limite diário excedido."
+// 400 Bad Request (quando o cliente informado não existe)
+Cliente não encontrado.
 ```
+
+> **Nota:** As validações específicas da cadeia de responsabilidade e do proxy imprimem seus detalhes diretamente no console/logs da aplicação:
+> - `Cliente não autenticado.`
+> - `Saldo insuficiente.`
+> - `Valor excede o limite diário permitido.`
+> - `[LOG] Cliente <nome> autorizado.` / `Operação 'Saque' realizada no valor de R$<valor>`
 
 ---
 
@@ -123,20 +144,32 @@ http://localhost:8080/swagger-ui.html
 
 Você pode testar todos os endpoints diretamente pelo navegador, sem precisar de Postman ou curl.
 
+### Console do H2 Database
+
+O console do banco em memória H2 também está habilitado para inspeção:
+
+- **URL:** `http://localhost:8080/h2-console`
+- **JDBC URL:** `jdbc:h2:mem:banco`
+- **User Name:** `sa`
+- **Password:** *(em branco)*
+
 ---
 
 ## Estrutura do Projeto
 
 ```
 Sistema/src/main/java/com/example/Banco/
+├── SistemaBancarioApplication.java   # Classe principal Spring Boot e runner de testes
 ├── controller/
 │   └── BancoController.java          # Entrada HTTP REST
 ├── dto/
 │   └── OperacaoDTO.java              # Dados da requisição (clienteId, valor)
 ├── model/
-│   └── Cliente.java                  # Entidade JPA
+│   ├── Cliente.java                  # Entidade JPA do cliente
+│   ├── ContaBancaria.java            # Entidade JPA da conta bancária
+│   └── RequisicaoOperacao.java       # Modelo interno para a cadeia de responsabilidade
 ├── repository/
-│   └── ClienteRepository.java        # Acesso ao banco via Spring Data
+│   └── ClienteRepository.java        # Acesso ao banco via Spring Data JPA
 ├── service/
 │   └── BancoService.java             # Lógica de orquestração
 └── pattern/
